@@ -205,9 +205,17 @@ http://localhost:8501
 ### Typical Teacher/Parent workflow
 
 1. Choose **Teacher / Parent** from the landing screen.
-2. Select a child profile.
-3. Review available progress, activity, stars, and classification history.
-4. Use the insights to guide practice and follow-up support.
+2. Log in with the admin credentials.
+3. Select a child profile.
+4. Review available progress, activity, stars, and classification history.
+5. Use the insights to guide practice and follow-up support.
+
+Default demo credentials:
+
+```text
+Username: admin
+Password: Teacher@123
+```
 
 ### Programmatic model check
 
@@ -251,6 +259,24 @@ database/learning_support.db
 ```
 
 Use `database/db_handler.py` for schema and data-access changes. For a clean local demo reset, back up the database first, then replace or recreate it intentionally.
+
+### Teacher/Parent admin login
+
+Teacher/Parent Mode is protected by a simple admin login. By default, the app uses:
+
+```text
+Username: admin
+Password: Teacher@123
+```
+
+To customize credentials without editing `app.py`, copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and change the values:
+
+```toml
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "your-new-password"
+```
+
+Do not commit a real `.streamlit/secrets.toml` file if it contains private credentials.
 
 ### UI and accessibility
 

@@ -11,6 +11,7 @@ import os
 import uuid
 import random
 import re
+import hmac
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -26,6 +27,8 @@ logger = get_logger("app")
 # Used in the teacher dashboard to highlight anonymous accounts that still
 # need a real child name.
 ANONYMOUS_NAME_RE = re.compile(r"^Friend[-_]\d{3,6}$", re.IGNORECASE)
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "Teacher@123"
 
 
 def _generate_anon_name(existing_names: list[str]) -> str:
@@ -39,6 +42,53 @@ def _generate_anon_name(existing_names: list[str]) -> str:
             return candidate
     # Extremely unlikely fallback — widen the suffix to avoid a collision.
     return f"Friend-{random.randint(10000, 999999)}"
+
+
+def get_admin_credentials():
+    """Read Teacher/Parent admin credentials from Streamlit secrets, with demo defaults."""
+    try:
+        username = st.secrets.get("ADMIN_USERNAME", DEFAULT_ADMIN_USERNAME)
+        password = st.secrets.get("ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
+    except Exception:
+        username = DEFAULT_ADMIN_USERNAME
+        password = DEFAULT_ADMIN_PASSWORD
+
+    return str(username), str(password)
+
+
+def show_teacher_login():
+    """Require admin login before opening Teacher/Parent mode."""
+    with st.sidebar:
+        st.markdown("### 🎨 Appearance")
+        render_theme_toggle(location="sidebar", key_suffix="teacher_login")
+        st.divider()
+        if st.button("🔙 Back to Mode Selection", use_container_width=True):
+            st.session_state.app_mode = "child"
+            st.session_state.mode_selected = False
+            st.session_state.teacher_authenticated = False
+            st.rerun()
+
+    st.markdown('<div class="teacher-header"><h2>🔐 Teacher/Parent Login</h2></div>',
+                unsafe_allow_html=True)
+    st.info("Enter the admin credentials to view child progress and assessment details.")
+
+    expected_username, expected_password = get_admin_credentials()
+
+    with st.form("teacher_login_form"):
+        username = st.text_input("Username", placeholder="admin")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login", use_container_width=True)
+
+    if submitted:
+        username_ok = hmac.compare_digest(username.strip(), expected_username)
+        password_ok = hmac.compare_digest(password, expected_password)
+
+        if username_ok and password_ok:
+            st.session_state.teacher_authenticated = True
+            st.success("Login successful. Opening Teacher/Parent dashboard...")
+            st.rerun()
+        else:
+            st.error("Incorrect username or password. Please try again.")
 
 # Page configuration - must be first Streamlit command
 st.set_page_config(
@@ -307,6 +357,7 @@ def show_mode_selector():
                          help="See how your child is doing"):
                 st.session_state.app_mode = "teacher"
                 st.session_state.mode_selected = True
+                st.session_state.teacher_authenticated = False
                 st.rerun()
 
 
@@ -584,6 +635,12 @@ def show_teacher_home():
         st.divider()
         if st.button("🔙 Switch to Child Mode", use_container_width=True):
             st.session_state.app_mode = "child"
+            st.session_state.teacher_authenticated = False
+            st.session_state.pop("confirm_delete_child_id", None)
+            st.rerun()
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.teacher_authenticated = False
+            st.session_state.mode_selected = False
             st.session_state.pop("confirm_delete_child_id", None)
             st.rerun()
         if st.button("🔄 Refresh Data", use_container_width=True):
@@ -1125,6 +1182,9 @@ def main():
     
     if 'app_mode' not in st.session_state:
         st.session_state.app_mode = "child"
+
+    if 'teacher_authenticated' not in st.session_state:
+        st.session_state.teacher_authenticated = False
     
     # Show mode selector if not selected
     if not st.session_state.mode_selected:
@@ -1134,7 +1194,10 @@ def main():
         if st.session_state.app_mode == "child":
             show_child_home()
         else:
-            show_teacher_home()
+            if st.session_state.teacher_authenticated:
+                show_teacher_home()
+            else:
+                show_teacher_login()
 
 
 if __name__ == "__main__":
