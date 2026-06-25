@@ -26,6 +26,7 @@ The system is designed around two principles:
 - [Configuration](#configuration)
 - [Running the Application](#running-the-application)
 - [Testing & Verification](#testing--verification)
+- [Kaggle Datasets](#kaggle-datasets)
 - [Training Notebooks](#training-notebooks)
 - [Machine Learning Models](#machine-learning-models)
 - [Database & Analytics](#database--analytics)
@@ -334,9 +335,129 @@ Exit code `0` = all critical checks passed.
 
 ---
 
+## Kaggle Datasets
+
+Model training in `Notebooks/` relies on **two Kaggle datasets** mounted under `/kaggle/input/`. The Streamlit app itself does not download these — they are only needed when re-running the training notebooks.
+
+### 1. Dyslexia Handwriting Dataset
+
+| | |
+|---|---|
+| **Kaggle** | [drizasazanitaisa/dyslexia-handwriting-dataset](https://www.kaggle.com/datasets/drizasazanitaisa/dyslexia-handwriting-dataset) |
+| **Mount path** | `/kaggle/input/dyslexia-dataset` |
+| **Format** | Folder-per-class image files (`ImageFolder`) |
+
+Handwritten letter images grouped into three source folders. The dataset combines uppercase letters from NIST Special Database 19, lowercase samples from public handwriting collections, and real-world writing from dyslexic students (Penang, Malaysia) — as described in related dyslexia-handwriting research.
+
+```
+dyslexia-dataset/
+├── Train/
+│   ├── Normal/      # Standard letter orientation (non-dyslexic baseline)
+│   ├── Reversal/    # Mirrored / flipped letters (dyslexia-related reversals)
+│   └── Corrected/   # Reversed letters corrected back (residual reversal cues)
+└── Test/
+    ├── Normal/
+    ├── Reversal/
+    └── Corrected/
+```
+
+**Approximate size** (from `Final code.ipynb` exploration):
+
+| Split | Samples |
+|-------|---------|
+| Train | ~151,649 |
+| Test | ~56,723 |
+| **Total** | **~208,372** |
+
+**Binary label mapping** used during training (`remap_synthetic_to_binary`):
+
+| Folder | Binary label | Meaning |
+|--------|--------------|---------|
+| `Normal` | **0 — Normal** | Non-dyslexic handwriting |
+| `Reversal` | **1 — Dyslexia** | Dyslexia-indicator patterns |
+| `Corrected` | **1 — Dyslexia** | Corrected forms that still carry reversal cues |
+
+The custom **CNN** checkpoint keeps the original three folders as separate output classes internally; **MobileNet** and **EfficientNet** train on the collapsed binary labels above.
+
+---
+
+### 2. EMNIST ByClass
+
+| | |
+|---|---|
+| **Kaggle** | [crawford/emnist](https://www.kaggle.com/datasets/crawford/emnist) |
+| **Mount path** | `/kaggle/input/emnist` |
+| **Files used** | `emnist-byclass-train.csv`, `emnist-byclass-test.csv` |
+| **Format** | CSV — column 0 = class label, columns 1–784 = 28×28 pixel values |
+
+[EMNIST](https://www.nist.gov/itl/products-and-services/emnist-dataset) (Extended MNIST) **ByClass** split: 62 classes covering digits, uppercase, and lowercase letters.
+
+| Split | Samples |
+|-------|---------|
+| Train | ~697,932 |
+| Test | ~116,323 |
+
+**Role in this project:** EMNIST acts as **normal-handwriting augmentation**. All 62 classes are remapped to binary label **0 (Normal)** so the model sees a large volume of standard character shapes alongside dyslexia-indicator samples.
+
+---
+
+### How the datasets are combined
+
+The training notebooks merge both sources before the train/validation/test split:
+
+```
+┌─────────────────────────┐     ┌─────────────────────────┐
+│  Dyslexia Handwriting   │     │   EMNIST ByClass        │
+│  Normal / Reversal /    │     │   62 classes → all      │
+│  Corrected → binary     │     │   mapped to Normal (0)  │
+└───────────┬─────────────┘     └───────────┬─────────────┘
+            │                               │
+            └───────────┬───────────────────┘
+                        ▼
+              ConcatDataset (train / val / test)
+                        │
+            ┌───────────┼───────────┐
+            ▼           ▼           ▼
+         Training    Validation     Test
+         (~subset)   (~subset)   (synthetic test + EMNIST test)
+```
+
+Configurable fractions (environment variables in the notebooks):
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `EFFNET_DATASET_FRACTION` | `0.35` | Fraction of the dyslexia dataset used for training |
+| `EMNIST_TRAIN_FRACTION` | `0.25` | Fraction of EMNIST train CSV used |
+
+Train and validation sets combine **dyslexia samples + an EMNIST subset**. The test set pairs the held-out dyslexia test split with the full EMNIST test CSV for evaluation at scale.
+
+---
+
+### Adding datasets on Kaggle
+
+When creating a Kaggle notebook session:
+
+1. **Add Data** → search and attach both datasets above.
+2. Confirm they appear as `dyslexia-dataset` and `emnist` under `/kaggle/input/` (Kaggle uses the dataset slug as the folder name).
+3. Enable a **GPU** accelerator for training cells.
+4. Run the notebook from top to bottom (or resume from saved checkpoints in `/kaggle/working/`).
+
+**Kaggle CLI** (optional, with API credentials configured):
+
+```bash
+kaggle datasets download -d drizasazanitaisa/dyslexia-handwriting-dataset
+kaggle datasets download -d crawford/emnist
+```
+
+Extract the archives and mirror the same folder layout locally, then update paths in the notebook from `/kaggle/input/…` to your local directories.
+
+---
+
 ## Training Notebooks
 
 The `Notebooks/` folder holds the **offline training phase** of the architecture — everything that produces the `.pth` checkpoints loaded by `models/model_loader.py` at runtime. These notebooks are **not** required to run the Streamlit app; they document how the models were built and can be re-run on Kaggle or a local GPU machine.
+
+Dataset details and Kaggle setup are in [Kaggle Datasets](#kaggle-datasets).
 
 ### Primary notebook
 
@@ -365,7 +486,7 @@ Duplicate copies of these notebooks also live under `Notebooks/Other/` for archi
 
 ### Running a notebook
 
-- **Kaggle:** Upload or link the dyslexia + EMNIST datasets referenced in the notebook metadata, enable GPU, and run all cells.
+- **Kaggle:** Attach the datasets listed in [Kaggle Datasets](#kaggle-datasets), enable GPU, and run all cells.
 - **Local:** Install the same PyTorch/torchvision stack as `requirements.txt`, point dataset paths at your local copies of the training folders, and adjust checkpoint directories away from `/kaggle/working/…`.
 
 After training, align exported checkpoints with the names expected by `model_loader.py` (see [Machine Learning Models](#machine-learning-models) for class-label conventions).
@@ -389,6 +510,8 @@ Training is documented in [Training Notebooks](#training-notebooks). Label mappi
 ```
 Upload → EXIF correction → Grayscale → Resize / pad → Normalize → Model → Softmax → Child-safe label
 ```
+
+---
 
 ## Database & Analytics
 
